@@ -1,65 +1,69 @@
-import Image from "next/image";
-import styles from "./page.module.css";
+'use client';
+
+import Link from 'next/link';
+import { useEffect, useState } from 'react';
 
 export default function Home() {
+  const [roomId, setRoomId] = useState('');
+
+  useEffect(() => {
+    // Generate a random room ID on the client to avoid hydration mismatch
+    const randomStr = Math.random().toString(36).substring(2, 8);
+    setRoomId(`room-${randomStr}`);
+  }, []);
+
   return (
-    <div className={styles.page}>
-      <main className={styles.main}>
-        <Image
-          className={styles.logo}
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className={styles.intro}>
-          <h1>To get started, edit the page.tsx file.</h1>
-          <p>
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+    <div className="home-container">
+      <main className="hero-content">
+        {/* Logo/Branding */}
+        <div className="branding">
+          <div className="logo-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" className="icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+            </svg>
+          </div>
+          <h1 className="main-title text-glow">Web-Talkie</h1>
+          <p className="subtitle">Lightweight, zero-friction voice communication.</p>
         </div>
-        <div className={styles.ctas}>
-          <a
-            className={styles.primary}
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className={styles.logo}
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className={styles.secondary}
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+
+        {/* Feature Cards */}
+        <div className="features-grid">
+          <div className="feature-card">
+            <span className="feature-title">🚀 Zero-Friction Access</span>
+            <p className="feature-desc">No login required. Join via link and start talking.</p>
+          </div>
+          <div className="feature-card">
+            <span className="feature-title">⚡ Real-time Performance</span>
+            <p className="feature-desc">Sub-500ms latency for a true walkie-talkie experience.</p>
+          </div>
         </div>
+
+        {/* Action Area */}
+        <div className="action-area">
+          {roomId ? (
+            <Link
+              href={`/room/${roomId}`}
+              className="big-primary-button"
+              id="create-room-btn"
+              style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+            >
+              Create Room
+            </Link>
+          ) : (
+            <button
+              className="big-primary-button"
+              disabled
+              id="create-room-btn"
+            >
+              Generating Room...
+            </button>
+          )}
+        </div>
+
+        {/* Footer/Disclaimer */}
+        <p className="disclaimer">
+          By creating a room, you agree to grant microphone access when prompted.
+        </p>
       </main>
     </div>
   );
