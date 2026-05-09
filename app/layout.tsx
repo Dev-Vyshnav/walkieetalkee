@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
@@ -15,7 +15,24 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Web-Talkie - Instant Voice Communication",
   description: "A lightweight, URL-based voice communication tool. Create a private frequency and share it via a simple link.",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "default",
+    title: "Web-Talkie",
+  },
+  formatDetection: {
+    telephone: false,
+  },
 };
+
+export const viewport: Viewport = {
+  themeColor: "#f97316",
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  userScalable: false,
+};
+
 
 export default function RootLayout({
   children,
