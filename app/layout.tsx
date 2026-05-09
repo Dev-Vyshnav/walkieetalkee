@@ -34,6 +34,8 @@ export const viewport: Viewport = {
 };
 
 
+import PWAInstall from "@/components/PWAInstall";
+
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -41,7 +43,11 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className={`${geistSans.variable} ${geistMono.variable}`}>
-      <body>{children}</body>
+      <body>
+        {children}
+        <PWAInstall />
+      </body>
     </html>
   );
 }
+
