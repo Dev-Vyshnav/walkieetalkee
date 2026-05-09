@@ -1,7 +1,7 @@
 'use client';
 
 import { useParams } from 'next/navigation';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import io, { Socket } from 'socket.io-client';
 
 export default function RoomPage() {
@@ -17,6 +17,60 @@ export default function RoomPage() {
   const socketRef = useRef<Socket | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
   const peersRef = useRef<Record<string, RTCPeerConnection>>({});
+  const audioCtxRef = useRef<AudioContext | null>(null);
+
+  // Synthesize a static "click" when PTT starts
+  const playStartClick = useCallback(() => {
+    if (!audioCtxRef.current) return;
+    const ctx = audioCtxRef.current;
+    
+    const bufferSize = ctx.sampleRate * 0.05; // 50ms
+    const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) {
+      data[i] = Math.random() * 2 - 1; // White noise
+    }
+    
+    const noise = ctx.createBufferSource();
+    noise.buffer = buffer;
+    
+    const noiseFilter = ctx.createBiquadFilter();
+    noiseFilter.type = 'bandpass';
+    noiseFilter.frequency.value = 2000;
+    
+    const gainNode = ctx.createGain();
+    gainNode.gain.setValueAtTime(0.3, ctx.currentTime);
+    gainNode.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.05);
+    
+    noise.connect(noiseFilter);
+    noiseFilter.connect(gainNode);
+    gainNode.connect(ctx.destination);
+    
+    noise.start();
+  }, []);
+
+  // Synthesize a "roger beep" when PTT ends
+  const playRogerBeep = useCallback(() => {
+    if (!audioCtxRef.current) return;
+    const ctx = audioCtxRef.current;
+    
+    const osc = ctx.createOscillator();
+    osc.type = 'sine';
+    
+    const gainNode = ctx.createGain();
+    gainNode.gain.setValueAtTime(0.15, ctx.currentTime);
+    gainNode.gain.setValueAtTime(0.15, ctx.currentTime + 0.1);
+    gainNode.gain.setValueAtTime(0, ctx.currentTime + 0.15);
+    
+    osc.frequency.setValueAtTime(1000, ctx.currentTime);
+    osc.frequency.setValueAtTime(1500, ctx.currentTime + 0.05); // Switch tone halfway
+    
+    osc.connect(gainNode);
+    gainNode.connect(ctx.destination);
+    
+    osc.start();
+    osc.stop(ctx.currentTime + 0.15);
+  }, []);
 
   const iceServers = {
     iceServers: [
@@ -93,9 +147,11 @@ export default function RoomPage() {
       console.log(`PTT state from ${data.sender}: ${data.isSpeaking}`);
       if (data.isSpeaking) {
         setActiveSpeakers(prev => [...prev, data.sender]);
+        playStartClick();
         // Audio ducking simulation: lower volume of others if needed
       } else {
         setActiveSpeakers(prev => prev.filter(id => id !== data.sender));
+        playRogerBeep();
       }
     });
 
@@ -111,10 +167,19 @@ export default function RoomPage() {
       localStreamRef.current?.getTracks().forEach(track => track.stop());
       Object.keys(peersRef.current).forEach(cleanupPeer);
     };
-  }, [roomId]);
+  }, [roomId, playStartClick, playRogerBeep]);
 
   const initAudioAndJoin = async () => {
     try {
+      // Initialize AudioContext on first user interaction
+      if (!audioCtxRef.current) {
+        const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+        audioCtxRef.current = new AudioContextClass();
+      }
+      if (audioCtxRef.current.state === 'suspended') {
+        await audioCtxRef.current.resume();
+      }
+
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       localStreamRef.current = stream;
 
@@ -155,9 +220,52 @@ export default function RoomPage() {
         audioEl = document.createElement('audio');
         audioEl.id = `audio-${userId}`;
         audioEl.autoplay = true;
+        // Mute raw audio, we route it through Web Audio API
+        audioEl.muted = true;
         document.body.appendChild(audioEl);
       }
       audioEl.srcObject = remoteStream;
+
+      // Apply Web Audio API filters for radio effect
+      if (audioCtxRef.current && !(audioEl as any)._audioProcessed) {
+        (audioEl as any)._audioProcessed = true;
+        const audioCtx = audioCtxRef.current;
+        
+        try {
+          const source = audioCtx.createMediaStreamSource(remoteStream);
+          
+          const highpass = audioCtx.createBiquadFilter();
+          highpass.type = 'highpass';
+          highpass.frequency.value = 300;
+
+          const lowpass = audioCtx.createBiquadFilter();
+          lowpass.type = 'lowpass';
+          lowpass.frequency.value = 3000;
+
+          const distortion = audioCtx.createWaveShaper();
+          const k = 50;
+          const n_samples = 44100;
+          const curve = new Float32Array(n_samples);
+          const deg = Math.PI / 180;
+          for (let i = 0; i < n_samples; ++i) {
+            const x = (i * 2) / n_samples - 1;
+            curve[i] = ((3 + k) * x * 20 * deg) / (Math.PI + k * Math.abs(x));
+          }
+          distortion.curve = curve;
+          
+          const gainNode = audioCtx.createGain();
+          gainNode.gain.value = 1.2;
+
+          source.connect(highpass);
+          highpass.connect(lowpass);
+          lowpass.connect(distortion);
+          distortion.connect(gainNode);
+          gainNode.connect(audioCtx.destination);
+        } catch (err) {
+          console.error('Error applying radio filters:', err);
+          audioEl.muted = false; // Fallback
+        }
+      }
     };
 
     // Handle ICE candidates
@@ -202,6 +310,8 @@ export default function RoomPage() {
     if (!localStreamRef.current) return;
     setIsSpeaking(true);
 
+    playStartClick();
+
     // Enable microphone track
     localStreamRef.current.getAudioTracks().forEach(track => {
       track.enabled = true;
@@ -213,6 +323,8 @@ export default function RoomPage() {
   const handlePTTEnd = () => {
     if (!localStreamRef.current) return;
     setIsSpeaking(false);
+
+    playRogerBeep();
 
     // Disable microphone track
     localStreamRef.current.getAudioTracks().forEach(track => {
