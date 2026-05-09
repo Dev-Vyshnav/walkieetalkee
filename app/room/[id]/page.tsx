@@ -13,11 +13,84 @@ export default function RoomPage() {
   const [activeSpeakers, setActiveSpeakers] = useState<string[]>([]);
   const [usersInRoom, setUsersInRoom] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
 
   const socketRef = useRef<Socket | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
   const peersRef = useRef<Record<string, RTCPeerConnection>>({});
   const audioCtxRef = useRef<AudioContext | null>(null);
+  const wakeLockRef = useRef<any>(null);
+  const pttButtonRef = useRef<HTMLButtonElement>(null);
+
+  // iOS Safari touch handling
+  useEffect(() => {
+    const btn = pttButtonRef.current;
+    if (!btn) return;
+
+    const preventSelection = (e: TouchEvent) => {
+      if (e.touches.length > 1) e.preventDefault(); // Prevent multi-touch zoom
+    };
+
+    btn.addEventListener('touchstart', preventSelection, { passive: false });
+    
+    return () => {
+      btn.removeEventListener('touchstart', preventSelection);
+    };
+  }, []);
+
+
+  // Wake Lock to keep screen on
+  useEffect(() => {
+    const requestWakeLock = async () => {
+      if ('wakeLock' in navigator && document.visibilityState === 'visible') {
+        try {
+          // Check if we already have a lock
+          if (wakeLockRef.current) return;
+          
+          wakeLockRef.current = await (navigator as any).wakeLock.request('screen');
+          console.log('Wake Lock active');
+          
+          wakeLockRef.current.addEventListener('release', () => {
+            console.log('Wake Lock released');
+            wakeLockRef.current = null;
+          });
+        } catch (err) {
+          // Silence visibility errors
+          if ((err as any).name !== 'NotAllowedError') {
+            console.error('Wake Lock error:', err);
+          }
+        }
+      }
+    };
+
+    const handleVisibilityChange = () => {
+      if (isConnected && document.visibilityState === 'visible') {
+        requestWakeLock();
+      }
+    };
+
+    if (isConnected) {
+      requestWakeLock();
+      document.addEventListener('visibilitychange', handleVisibilityChange);
+    }
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      if (wakeLockRef.current) {
+        wakeLockRef.current.release().then(() => {
+          wakeLockRef.current = null;
+        });
+      }
+    };
+  }, [isConnected]);
+
+
+  // Haptic feedback
+  const vibrate = (pattern: number | number[]) => {
+    if (typeof navigator !== 'undefined' && navigator.vibrate) {
+      navigator.vibrate(pattern);
+    }
+  };
 
   // Synthesize a static "click" when PTT starts
   const playStartClick = useCallback(() => {
@@ -72,6 +145,27 @@ export default function RoomPage() {
     osc.stop(ctx.currentTime + 0.15);
   }, []);
 
+  const handleCopyLink = async () => {
+    const url = window.location.href;
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(url);
+      } else {
+        // Fallback for non-secure contexts
+        const textArea = document.createElement("textarea");
+        textArea.value = url;
+        document.body.appendChild(textArea);
+        textArea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textArea);
+      }
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error('Failed to copy:', err);
+    }
+  };
+
   const iceServers = {
     iceServers: [
       { urls: 'stun:stun.l.google.com:19302' },
@@ -113,9 +207,6 @@ export default function RoomPage() {
 
     socketRef.current.on('user-joined', ({ userId }: { userId: string }) => {
       setUsersInRoom(prev => [...prev, userId]);
-      // Wait for offer from new user (or we can create one)
-      // Standard approach: new user creates offers to existing users.
-      // So here we just wait for the offer.
     });
 
     socketRef.current.on('offer', async (data: { sdp: RTCSessionDescriptionInit, sender: string }) => {
@@ -148,7 +239,6 @@ export default function RoomPage() {
       if (data.isSpeaking) {
         setActiveSpeakers(prev => [...prev, data.sender]);
         playStartClick();
-        // Audio ducking simulation: lower volume of others if needed
       } else {
         setActiveSpeakers(prev => prev.filter(id => id !== data.sender));
         playRogerBeep();
@@ -164,14 +254,15 @@ export default function RoomPage() {
     return () => {
       // Cleanup
       socketRef.current?.disconnect();
-      localStreamRef.current?.getTracks().forEach(track => track.stop());
+      if (localStreamRef.current) {
+        localStreamRef.current.getTracks().forEach(track => track.stop());
+      }
       Object.keys(peersRef.current).forEach(cleanupPeer);
     };
   }, [roomId, playStartClick, playRogerBeep]);
 
   const initAudioAndJoin = async () => {
     try {
-      // Initialize AudioContext on first user interaction
       if (!audioCtxRef.current) {
         const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
         audioCtxRef.current = new AudioContextClass();
@@ -183,7 +274,6 @@ export default function RoomPage() {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       localStreamRef.current = stream;
 
-      // By default, mute the local stream until PTT is pressed
       stream.getAudioTracks().forEach(track => {
         track.enabled = false;
       });
@@ -202,46 +292,38 @@ export default function RoomPage() {
     const pc = new RTCPeerConnection(iceServers);
     peersRef.current[userId] = pc;
 
-    // Add local tracks
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach(track => {
         pc.addTrack(track, localStreamRef.current!);
       });
     }
 
-    // Handle remote stream
     pc.ontrack = (event) => {
       console.log(`Received remote track from ${userId}`);
       const remoteStream = event.streams[0];
 
-      // Create or update audio element for this user
       let audioEl = document.getElementById(`audio-${userId}`) as HTMLAudioElement;
       if (!audioEl) {
         audioEl = document.createElement('audio');
         audioEl.id = `audio-${userId}`;
         audioEl.autoplay = true;
-        // Mute raw audio, we route it through Web Audio API
         audioEl.muted = true;
         document.body.appendChild(audioEl);
       }
       audioEl.srcObject = remoteStream;
 
-      // Apply Web Audio API filters for radio effect
       if (audioCtxRef.current && !(audioEl as any)._audioProcessed) {
         (audioEl as any)._audioProcessed = true;
         const audioCtx = audioCtxRef.current;
         
         try {
           const source = audioCtx.createMediaStreamSource(remoteStream);
-          
           const highpass = audioCtx.createBiquadFilter();
           highpass.type = 'highpass';
           highpass.frequency.value = 300;
-
           const lowpass = audioCtx.createBiquadFilter();
           lowpass.type = 'lowpass';
           lowpass.frequency.value = 3000;
-
           const distortion = audioCtx.createWaveShaper();
           const k = 50;
           const n_samples = 44100;
@@ -252,7 +334,6 @@ export default function RoomPage() {
             curve[i] = ((3 + k) * x * 20 * deg) / (Math.PI + k * Math.abs(x));
           }
           distortion.curve = curve;
-          
           const gainNode = audioCtx.createGain();
           gainNode.gain.value = 1.2;
 
@@ -263,12 +344,11 @@ export default function RoomPage() {
           gainNode.connect(audioCtx.destination);
         } catch (err) {
           console.error('Error applying radio filters:', err);
-          audioEl.muted = false; // Fallback
+          audioEl.muted = false;
         }
       }
     };
 
-    // Handle ICE candidates
     pc.onicecandidate = (event) => {
       if (event.candidate) {
         socketRef.current?.emit('ice-candidate', {
@@ -279,7 +359,6 @@ export default function RoomPage() {
       }
     };
 
-    // If initiator, create offer
     if (isInitiator) {
       pc.onnegotiationneeded = async () => {
         try {
@@ -309,32 +388,25 @@ export default function RoomPage() {
   const handlePTTStart = () => {
     if (!localStreamRef.current) return;
     setIsSpeaking(true);
-
     playStartClick();
-
-    // Enable microphone track
+    vibrate(40);
     localStreamRef.current.getAudioTracks().forEach(track => {
       track.enabled = true;
     });
-
     socketRef.current?.emit('ptt-state', { isSpeaking: true, roomId });
   };
 
   const handlePTTEnd = () => {
     if (!localStreamRef.current) return;
     setIsSpeaking(false);
-
     playRogerBeep();
-
-    // Disable microphone track
+    vibrate([20, 50, 20]);
     localStreamRef.current.getAudioTracks().forEach(track => {
       track.enabled = false;
     });
-
     socketRef.current?.emit('ptt-state', { isSpeaking: false, roomId });
   };
 
-  // Keyboard support for Spacebar
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.code === 'Space' && !isSpeaking) {
@@ -342,17 +414,14 @@ export default function RoomPage() {
         handlePTTStart();
       }
     };
-
     const handleKeyUp = (e: KeyboardEvent) => {
       if (e.code === 'Space') {
         e.preventDefault();
         handlePTTEnd();
       }
     };
-
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('keyup', handleKeyUp);
-
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
@@ -367,23 +436,28 @@ export default function RoomPage() {
           <span>{isConnected ? 'Connected' : 'Connecting...'}</span>
         </div>
         <h2 className="room-title">Frequency: {roomId}</h2>
-        <button className="copy-link-btn" onClick={() => navigator.clipboard.writeText(window.location.href)}>
-          Copy Link
+        <button 
+          className={`copy-link-btn ${copied ? 'copied' : ''}`} 
+          onClick={handleCopyLink}
+        >
+          {copied ? 'Copied!' : 'Copy Link'}
         </button>
       </header>
 
       {error && <div className="error-banner">{error}</div>}
 
       <main className="room-content">
-        {/* Big PTT Button */}
         <div className="ptt-area">
           <button
+            ref={pttButtonRef}
             className={`ptt-button ${isSpeaking ? 'active' : ''}`}
             onMouseDown={handlePTTStart}
+
             onMouseUp={handlePTTEnd}
             onMouseLeave={handlePTTEnd}
-            onTouchStart={handlePTTStart}
-            onTouchEnd={handlePTTEnd}
+            onTouchStart={(e) => { e.preventDefault(); handlePTTStart(); }}
+            onTouchEnd={(e) => { e.preventDefault(); handlePTTEnd(); }}
+            onContextMenu={(e) => e.preventDefault()}
             disabled={!isConnected || !!error}
           >
             <div className="inner-circle">
@@ -393,7 +467,6 @@ export default function RoomPage() {
           <p className="ptt-hint">Or press and hold Spacebar</p>
         </div>
 
-        {/* Participants List */}
         <div className="participants-area">
           <h3>Users Online ({usersInRoom.length + 1})</h3>
           <div className="users-list">
