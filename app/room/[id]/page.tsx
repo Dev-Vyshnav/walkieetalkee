@@ -14,8 +14,12 @@ export default function RoomPage() {
   const [usersInRoom, setUsersInRoom] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [micPermission, setMicPermission] = useState<'prompt' | 'granted' | 'denied'>('prompt');
+  const [showHelp, setShowHelp] = useState(false);
 
   const socketRef = useRef<Socket | null>(null);
+
+
   const localStreamRef = useRef<MediaStream | null>(null);
   const peersRef = useRef<Record<string, RTCPeerConnection>>({});
   const audioCtxRef = useRef<AudioContext | null>(null);
@@ -38,8 +42,26 @@ export default function RoomPage() {
     };
   }, []);
 
+  // Track Microphone Permission
+  useEffect(() => {
+    if (typeof navigator !== 'undefined' && navigator.permissions && (navigator.permissions as any).query) {
+      const checkPermission = async () => {
+        try {
+          const status = await navigator.permissions.query({ name: 'microphone' as any });
+          setMicPermission(status.state as any);
+          status.onchange = () => {
+            setMicPermission(status.state as any);
+          };
+        } catch (err) {
+          console.log('Permissions API not supported for microphone');
+        }
+      };
+      checkPermission();
+    }
+  }, []);
 
   // Wake Lock to keep screen on
+
   useEffect(() => {
     const requestWakeLock = async () => {
       if ('wakeLock' in navigator && document.visibilityState === 'visible') {
@@ -271,20 +293,16 @@ export default function RoomPage() {
         await audioCtxRef.current.resume();
       }
 
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      localStreamRef.current = stream;
-
-      stream.getAudioTracks().forEach(track => {
-        track.enabled = false;
-      });
-
-      console.log('Microphone access granted');
+      // We no longer request the mic here to keep the red dot hidden.
+      // We only join the room.
+      console.log('Joining room...');
       socketRef.current?.emit('join-room', roomId);
     } catch (err) {
-      console.error('Error accessing microphone:', err);
-      setError('Microphone access is required for Web-Talkie.');
+      console.error('Error initializing audio:', err);
+      setError('Audio initialization failed.');
     }
   };
+
 
   const createPeerConnection = (userId: string, isInitiator: boolean) => {
     if (peersRef.current[userId]) return peersRef.current[userId];
@@ -385,27 +403,79 @@ export default function RoomPage() {
     }
   };
 
-  const handlePTTStart = () => {
-    if (!localStreamRef.current) return;
+  const handlePTTStart = async () => {
     setIsSpeaking(true);
     playStartClick();
     vibrate(40);
-    localStreamRef.current.getAudioTracks().forEach(track => {
-      track.enabled = true;
-    });
-    socketRef.current?.emit('ptt-state', { isSpeaking: true, roomId });
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        } 
+      });
+      localStreamRef.current = stream;
+      const audioTrack = stream.getAudioTracks()[0];
+
+      // Update all existing peer connections
+      Object.values(peersRef.current).forEach(pc => {
+        const senders = pc.getSenders();
+        const audioSender = senders.find(s => s.track?.kind === 'audio' || !s.track);
+        
+        if (audioSender) {
+          audioSender.replaceTrack(audioTrack);
+        } else {
+          pc.addTrack(audioTrack, stream);
+        }
+      });
+
+      socketRef.current?.emit('ptt-state', { isSpeaking: true, roomId });
+    } catch (err) {
+      console.error('Failed to get microphone:', err);
+      setIsSpeaking(false);
+    }
   };
 
   const handlePTTEnd = () => {
-    if (!localStreamRef.current) return;
     setIsSpeaking(false);
     playRogerBeep();
     vibrate([20, 50, 20]);
-    localStreamRef.current.getAudioTracks().forEach(track => {
-      track.enabled = false;
-    });
+
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach(track => {
+        track.stop();
+      });
+      
+      // Clear tracks from peer connections to ensure red dot disappears
+      Object.values(peersRef.current).forEach(pc => {
+        pc.getSenders().forEach(sender => {
+          if (sender.track?.kind === 'audio') {
+            sender.replaceTrack(null);
+          }
+        });
+      });
+      
+      localStreamRef.current = null;
+    }
+
     socketRef.current?.emit('ptt-state', { isSpeaking: false, roomId });
   };
+
+  const requestMicPermission = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      // Immediately stop it, we just wanted the permission
+      stream.getTracks().forEach(t => t.stop());
+      setMicPermission('granted');
+    } catch (err) {
+      console.error('Permission request failed:', err);
+      setMicPermission('denied');
+    }
+  };
+
+
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -434,6 +504,10 @@ export default function RoomPage() {
         <div className="status-indicator">
           <span className={`dot ${isConnected ? 'connected' : 'disconnected'}`}></span>
           <span>{isConnected ? 'Connected' : 'Connecting...'}</span>
+          <span className="separator">|</span>
+          <span className={`mic-status ${micPermission}`}>
+            Mic: {micPermission === 'granted' ? 'Allowed' : micPermission === 'denied' ? 'Blocked' : 'Ready'}
+          </span>
         </div>
         <h2 className="room-title">Frequency: {roomId}</h2>
         <button 
@@ -452,20 +526,48 @@ export default function RoomPage() {
             ref={pttButtonRef}
             className={`ptt-button ${isSpeaking ? 'active' : ''}`}
             onMouseDown={handlePTTStart}
-
             onMouseUp={handlePTTEnd}
             onMouseLeave={handlePTTEnd}
             onTouchStart={(e) => { e.preventDefault(); handlePTTStart(); }}
             onTouchEnd={(e) => { e.preventDefault(); handlePTTEnd(); }}
             onContextMenu={(e) => e.preventDefault()}
-            disabled={!isConnected || !!error}
+            disabled={!isConnected || !!error || micPermission === 'denied'}
           >
             <div className="inner-circle">
-              <span>{isSpeaking ? 'TALKING' : 'HOLD TO TALK'}</span>
+              <span>
+                {micPermission === 'denied' ? 'MIC BLOCKED' : isSpeaking ? 'TALKING' : 'HOLD TO TALK'}
+              </span>
             </div>
           </button>
+          
+          {/* Permission Guidance Button */}
+          {micPermission !== 'granted' && (
+            <div className="perm-container">
+              <button 
+                className={`perm-guide-btn ${micPermission}`}
+                onClick={micPermission === 'prompt' ? requestMicPermission : () => setShowHelp(!showHelp)}
+              >
+                {micPermission === 'prompt' ? 'Click to Enable Microphone' : 'How to unblock microphone?'}
+              </button>
+              
+              {showHelp && micPermission === 'denied' && (
+                <div className="help-box">
+                  <h4>To unblock your mic:</h4>
+                  <ul>
+                    <li>Click the <strong>Lock Icon</strong> 🔒 next to the URL above.</li>
+                    <li>Toggle <strong>Microphone</strong> to <strong>"On"</strong>.</li>
+                    <li>Refresh this page.</li>
+                  </ul>
+                  <p className="mobile-hint">On mobile, tap the <strong>AA</strong> or <strong>Settings</strong> icon in the address bar.</p>
+                </div>
+              )}
+            </div>
+          )}
+
+          
           <p className="ptt-hint">Or press and hold Spacebar</p>
         </div>
+
 
         <div className="participants-area">
           <h3>Users Online ({usersInRoom.length + 1})</h3>

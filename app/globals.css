@@ -195,7 +195,25 @@ a {
   color: #888;
 }
 
+.separator {
+  color: #333;
+  margin: 0 0.25rem;
+}
+
+.mic-status.granted {
+  color: var(--accent-color);
+}
+
+.mic-status.denied {
+  color: #FF3366;
+}
+
+.mic-status.prompt {
+  color: #888;
+}
+
 .dot {
+
   width: 8px;
   height: 8px;
   border-radius: 50%;
@@ -256,7 +274,92 @@ a {
   gap: 1.5rem;
 }
 
+.perm-guide-btn {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--card-border);
+  color: #AAA;
+  padding: 0.75rem 1.5rem;
+  border-radius: 999px;
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: all 0.2s;
+  animation: fadeIn 0.5s ease-out;
+}
+
+.perm-guide-btn.prompt {
+  border-color: var(--accent-color);
+  color: var(--accent-color);
+  background: rgba(0, 255, 102, 0.05);
+}
+
+.perm-guide-btn.prompt:hover {
+  background: rgba(0, 255, 102, 0.1);
+  transform: translateY(-2px);
+}
+
+.perm-guide-btn.denied {
+  border-color: #FF3366;
+  color: #FF3366;
+  background: rgba(255, 51, 102, 0.05);
+  cursor: help;
+}
+
+.perm-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+  width: 100%;
+  max-width: 300px;
+}
+
+.help-box {
+  background: rgba(255, 51, 102, 0.1);
+  border: 1px solid rgba(255, 51, 102, 0.2);
+  padding: 1rem;
+  border-radius: 12px;
+  color: #DDD;
+  font-size: 0.85rem;
+  text-align: left;
+  animation: slideDown 0.3s ease-out;
+}
+
+.help-box h4 {
+  color: #FF3366;
+  margin-bottom: 0.5rem;
+  font-size: 0.9rem;
+}
+
+.help-box ul {
+  padding-left: 1.25rem;
+  margin-bottom: 0.75rem;
+}
+
+.help-box li {
+  margin-bottom: 0.25rem;
+}
+
+.mobile-hint {
+  font-size: 0.75rem;
+  color: #888;
+  font-style: italic;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  padding-top: 0.5rem;
+}
+
+@keyframes slideDown {
+  from { opacity: 0; transform: translateY(-10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fadeIn {
+
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
 .ptt-button {
+
   width: 220px;
   height: 220px;
   border-radius: 50%;
