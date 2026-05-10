@@ -5,12 +5,24 @@ import { useEffect, useState } from 'react';
 
 export default function Home() {
   const [roomId, setRoomId] = useState('');
+  const [callsign, setCallsign] = useState('');
 
   useEffect(() => {
-    // Generate a random room ID on the client to avoid hydration mismatch
+    // Generate a random room ID
     const randomStr = Math.random().toString(36).substring(2, 8);
     setRoomId(`room-${randomStr}`);
+    
+    // Load saved callsign
+    const saved = localStorage.getItem('web-talkie-callsign');
+    if (saved) setCallsign(saved);
   }, []);
+
+  const handleCallsignChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.value.substring(0, 20); // Limit length
+    setCallsign(val);
+    localStorage.setItem('web-talkie-callsign', val);
+  };
+
 
   return (
     <div className="home-container">
@@ -38,7 +50,21 @@ export default function Home() {
           </div>
         </div>
 
+        {/* Callsign Input */}
+        <div className="callsign-area">
+          <label htmlFor="callsign">Your Callsign (Radio Name)</label>
+          <input 
+            id="callsign"
+            type="text" 
+            placeholder="e.g. Alpha-1" 
+            value={callsign}
+            onChange={handleCallsignChange}
+            className="callsign-input"
+          />
+        </div>
+
         {/* Action Area */}
+
         <div className="action-area">
           {roomId ? (
             <Link

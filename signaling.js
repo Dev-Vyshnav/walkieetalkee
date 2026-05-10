@@ -14,27 +14,35 @@ const io = new Server(httpServer, {
 io.on('connection', (socket) => {
   console.log(`User connected: ${socket.id}`);
   
-  socket.on('join-room', (roomId) => {
+  socket.on('join-room', (roomId, userName) => {
+    socket.userName = userName || `Echo-${socket.id.substring(0, 4)}`;
+    
     const room = io.sockets.adapter.rooms.get(roomId);
     const numClients = room ? room.size : 0;
     
     if (numClients >= 8) {
       socket.emit('room-full');
-      console.log(`Room ${roomId} is full. User ${socket.id} rejected.`);
       return;
     }
     
     socket.join(roomId);
-    console.log(`User ${socket.id} joined room: ${roomId}`);
+    console.log(`User ${socket.userName} joined room: ${roomId}`);
     
     // Notify others in the room
-    socket.to(roomId).emit('user-joined', { userId: socket.id });
+    socket.to(roomId).emit('user-joined', { userId: socket.id, userName: socket.userName });
     
     // Send current users in the room to the new user (excluding themselves)
     const clientsInRoom = Array.from(io.sockets.adapter.rooms.get(roomId) || []);
-    const otherClients = clientsInRoom.filter(id => id !== socket.id);
+    const otherClients = clientsInRoom
+      .filter(id => id !== socket.id)
+      .map(id => ({
+        userId: id,
+        userName: io.sockets.sockets.get(id)?.userName || id
+      }));
+      
     socket.emit('current-users', otherClients);
   });
+
 
   // WebRTC Signaling
   socket.on('offer', (data) => {
